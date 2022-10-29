@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 )
 
 type Session struct {
@@ -39,4 +43,46 @@ func main() {
 		log.Println(err.Error())
 		return
 	}
+}
+
+func (s Session) upload(paths []string) error {
+	for _, path := range paths {
+		upFile, err := os.Open(path)
+		if err != nil {
+			log.Printf("failed %s, error: %v", path, err.Error())
+			continue
+		}
+		defer upFile.Close()
+		upFileInfo, err := upFile.Stat()
+		if err != nil {
+			log.Printf("failed %s, error: %v", path, err.Error())
+			continue
+		}
+
+		var fileSize int64 = upFileInfo.Size()
+		fileBuffer := make([]byte, fileSize)
+		upFile.Read(fileBuffer)
+
+		_, err = s3.New(s.S3Session).PutObject(&s3.PutObjectInput{
+			Bucket:               aws.String(os.Getenv("BUCKET_NAME")),
+			Key:                  aws.String(path),
+			ACL:                  aws.String("public-read"),
+			Body:                 bytes.NewReader(fileBuffer),
+			ContentLength:        aws.Int64(int64(fileSize)),
+			ContentType:          aws.String(http.DetectContentType(fileBuffer)),
+			ContentDisposition:   aws.String("attachment"),
+			ServerSideEncryption: aws.String("AES256"),
+			StorageClass:         aws.String("INTELLIGENT_TIERING"),
+		})
+		if err != nil {
+			log.Printf("failed %s, error: %v", path, err.Error())
+			continue
+		}
+
+		url := "https://%s.s3-%s.amazonawa.com/%s"
+		url = fmt.Sprintf(url, os.Getenv("BUCKET_NAME"), os.Getenv("REGION"), path)
+		fmt.Printf("Uploaded File Url %s\n", url)
+
+	}
+	return nil
 }
